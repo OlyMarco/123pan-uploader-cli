@@ -76,19 +76,27 @@ class MPush:
         Returns:
             bool: True if file exists with same MD5, False otherwise
         """
-        if parent_id is not None and self.pan.parentFileId != parent_id:
-            self.pan.cdById(parent_id)
-        
-        # Refresh directory listing
-        self.pan.get_dir()
-        
-        for file_info in self.pan.list:
-            if file_info["FileName"] == file_name and file_info["Type"] == 0:
-                # Found file with same name, compare MD5 (Etag is the MD5)
-                remote_md5 = file_info.get("Etag", "").lower()
-                if remote_md5 == local_md5.lower():
-                    return True
-        return False
+        try:
+            if parent_id is not None and self.pan.parentFileId != parent_id:
+                self.pan.cdById(parent_id)
+            
+            # Refresh directory listing
+            self.pan.get_dir()
+            
+            # Safety check for None list
+            if self.pan.list is None:
+                return False
+            
+            for file_info in self.pan.list:
+                if file_info["FileName"] == file_name and file_info["Type"] == 0:
+                    # Found file with same name, compare MD5 (Etag is the MD5)
+                    remote_md5 = file_info.get("Etag", "").lower()
+                    if remote_md5 == local_md5.lower():
+                        return True
+            return False
+        except Exception as e:
+            tqdm.write(f"Warning: Could not check for existing file: {str(e)}")
+            return False
 
     def upload_file(self, file_path, parent_id=None, sure=None, skip_existing=True):
         """Upload a single file to 123Pan Cloud
