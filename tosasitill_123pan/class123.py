@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import re
 import time
 from .sign_get import getSign
@@ -8,14 +11,27 @@ import json
 import base64
 
 
-# 修改版，更加方便植入其他项目
-# 1.mkdir()增加了parentFileId参数，可以指定父文件夹，会先切换到父文件夹
-# 2.mkdir()增加了remake参数，如果remake为False，会先检查文件夹是否存在，存在则不创建，返回文件夹id
-# 3.增加了getdir的new接口封ip检测，如果检测到ip被封，会等待20s后再次尝试
-# 4.up_load()增加了parentFileId参数，可以指定父文件夹，会先切换到父文件夹
+# Modified version for easier integration into other projects
+# Features:
+# 1. mkdir() added parentFileId parameter to specify parent folder, will switch to parent folder first
+# 2. mkdir() added remake parameter, if remake=False, will check if folder exists first and return folder id if exists
+# 3. Added IP ban detection in get_dir new API, will wait 20s and retry if IP is banned
+# 4. up_load() added parentFileId parameter to specify parent folder, will switch to parent folder first
 
 
 class Pan123:
+    """123Pan Cloud Storage API Client
+    
+    This class provides methods to interact with 123Pan Cloud Storage service.
+    Features include login, file listing, upload, download, and directory management.
+    
+    Args:
+        readfile: If True, read credentials from 123pan.txt file (default: True)
+        user_name: Username for login (used if readfile=False)
+        pass_word: Password for login (used if readfile=False)
+        authorization: Bearer token for authentication (optional)
+        input_pwd: If True, prompt for credentials when not available (default: True)
+    """
     def __init__(self, readfile=True, user_name="", pass_word="", authorization="", input_pwd=True):
         self.RecycleList = None
         self.list = None
@@ -23,12 +39,12 @@ class Pan123:
             self.read_ini(user_name, pass_word, input_pwd, authorization)
         else:
             if user_name == "" or pass_word == "":
-                print("读取已禁用，用户名或密码为空")
+                print("Read disabled, username or password is empty")
                 if input_pwd:
-                    user_name = input("请输入用户名:")
-                    pass_word = input("请输入密码:")
+                    user_name = input("Please enter username:")
+                    pass_word = input("Please enter password:")
                 else:
-                    raise Exception("用户名或密码为空：读取禁用时，userName和passWord不能为空")
+                    raise Exception("Username or password is empty: When read is disabled, userName and passWord cannot be empty")
             self.userName = user_name
             self.passWord = pass_word
             self.authorization = authorization
@@ -63,6 +79,11 @@ class Pan123:
             self.get_dir()
 
     def login(self):
+        """Authenticate with 123Pan Cloud and obtain bearer token
+        
+        Returns:
+            int: Response code (200 for success, other values for failure)
+        """
         data = {"remember": True, "passport": self.userName, "password": self.passWord}
         sign = getSign('/b/api/user/sign_in')
         loginRes = requests.post("https://www.123pan.com/b/api/user/sign_in", headers=self.headerOnlyUsage, data=data,
@@ -100,6 +121,7 @@ class Pan123:
         return code
 
     def save_file(self):
+        """Save credentials and authorization token to 123pan.txt file"""
         with open("123pan.txt", "w") as f:
             saveList = {
                 "userName": self.userName,
@@ -108,9 +130,17 @@ class Pan123:
             }
 
             f.write(json.dumps(saveList))
-        print("Save!")
+        print("Saved!")
 
     def get_dir(self):
+        """Fetch file list from current directory
+        
+        Retrieves paginated file listing from 123Pan Cloud. Handles IP ban
+        detection and automatically retries after 20 seconds if banned.
+        
+        Returns:
+            int: Response code (0 for success, other values for failure)
+        """
         code = 0
         page = 1
         lists = []
@@ -166,6 +196,7 @@ class Pan123:
         return code
 
     def show(self):
+        """Display current directory listing with file numbers, sizes and names"""
         print("--------------------")
         for i in self.list:
             size = i["Size"]
@@ -175,17 +206,27 @@ class Pan123:
                 size_print = str(round(size / 1024, 2)) + "K"
 
             if i["Type"] == 0:
-
-                print("\033[33m" + "编号:", self.list.index(i) + 1, "\033[0m \t\t" + size_print + "\t\t\033[36m",
+                # File: yellow number, cyan filename
+                print("\033[33m" + "Number:", self.list.index(i) + 1, "\033[0m \t\t" + size_print + "\t\t\033[36m",
                       i["FileName"], "\033[0m")
             elif i["Type"] == 1:
-                print("\033[35m" + "编号:", self.list.index(i) + 1, " \t\t\033[36m",
+                # Folder: magenta number, cyan filename
+                print("\033[35m" + "Number:", self.list.index(i) + 1, " \t\t\033[36m",
                       i["FileName"], "\033[0m")
 
         print("--------------------")
 
-    # fileNumber 从0开始，0为第一个文件，传入时需要减一 ！！！
+    # fileNumber is 0-indexed, 0 is the first file, subtract 1 when passing!
     def link(self, file_number, showlink=True):
+        """Get download link for a file
+        
+        Args:
+            file_number: 0-indexed file number in the current directory listing
+            showlink: If True, print the download link (default: True)
+            
+        Returns:
+            str: Direct download URL, or error code on failure
+        """
         fileDetail = self.list[file_number]
         typeDetail = fileDetail['Type']
         if typeDetail == 1:
@@ -223,19 +264,24 @@ class Pan123:
         return redirect_url
 
     def download(self, file_number):
+        """Download a file from 123Pan Cloud
+        
+        Args:
+            file_number: 0-indexed file number in the current directory listing
+        """
         fileDetail = self.list[file_number]
         downLoadUrl = self.link(file_number, showlink=False)
-        name = fileDetail['FileName']  # 文件名
+        name = fileDetail['FileName']  # File name
         if os.path.exists(name):
-            print("文件 " + name + " 已存在，是否要覆盖？")
-            sure = input("输入1覆盖，2取消：")
+            print("File " + name + " already exists, do you want to overwrite?")
+            sure = input("Enter 1 to overwrite, 2 to cancel: ")
             if sure != '1':
                 return
         down = requests.get(downLoadUrl, stream=True)
 
-        size = int(down.headers['Content-Length'])  # 文件大小
-        content_size = int(size)  # 文件总大小
-        data_count = 0  # 当前已传输的大小
+        size = int(down.headers['Content-Length'])  # File size
+        content_size = int(size)  # Total file size
+        data_count = 0  # Current transferred size
         if size > 1048576:
             size_print = str(round(size / 1048576, 2)) + "M"
         else:
@@ -249,10 +295,10 @@ class Pan123:
                 f.write(i)
                 done_block = int((data_count / content_size) * 50)
                 data_count = data_count + len(i)
-                # 实时进度条进度
+                # Real-time progress bar
                 now_jd = (data_count / content_size) * 100
-                # %% 表示%
-                # 测速
+                # %% represents %
+                # Speed calculation
                 time1 = time.time()
                 pass_time = time1 - time_temp
                 if pass_time > 1:
@@ -273,6 +319,7 @@ class Pan123:
             print("\nok")
 
     def recycle(self):
+        """Fetch list of files in the recycle bin"""
         recycle_id = 0
         url = "https://www.123pan.com/a/api/file/list/new?driveId=0&limit=100&next=0&orderBy=fileId&orderDirection=desc&parentFileId=" + str(
             recycle_id) + "&trashed=true&&Page=1"
@@ -281,23 +328,30 @@ class Pan123:
         RecycleList = jsonRecycle['data']['InfoList']
         self.RecycleList = RecycleList
 
-    # fileNumber 从0开始，0为第一个文件，传入时需要减一 ！！！
+    # fileNumber is 0-indexed, 0 is the first file, subtract 1 when passing!
     def delete_file(self, file, by_num=True, operation=True):
-        # operation = 'true' 删除 ， operation = 'false' 恢复
+        """Delete or restore a file
+        
+        Args:
+            file: File number (0-indexed) or file detail object
+            by_num: If True, file is a number index; if False, file is the detail object
+            operation: True for delete, False for restore
+        """
+        # operation = 'true' for delete, operation = 'false' for restore
         if by_num:
             if not str(file).isdigit():
-                print("请输入数字")
+                print("Please enter a number")
                 return -1
             if 0 <= file < len(self.list):
                 file_detail = self.list[file]
             else:
-                print("不在合理范围内")
+                print("Out of valid range")
                 return
         else:
             if file in self.list:
                 file_detail = file
             else:
-                print("文件不存在")
+                print("File not found")
                 return
         dataDelete = {"driveId": 0,
                       "fileTrashInfoList": file_detail,
@@ -310,11 +364,12 @@ class Pan123:
         print(message)
 
     def share(self):
+        """Create a share link for selected files"""
         fileIdList = ""
         share_name_list = []
         add = '1'
         while str(add) == '1':
-            share_num = input("分享文件的编号：")
+            share_num = input("Enter file number to share: ")
             num_test2 = share_num.isdigit()
             if num_test2:
                 share_num = int(share_num)
@@ -324,12 +379,12 @@ class Pan123:
                     share_name_list.append(share_name)
                     print(share_name_list)
                     fileIdList = fileIdList + str(share_id) + ","
-                    add = input("输入1添加文件，0发起分享，其他取消")
+                    add = input("Enter 1 to add more files, 0 to create share, other to cancel: ")
             else:
-                print("请输入数字，，")
+                print("Please enter a number")
                 add = "1"
         if str(add) == "0":
-            sharePwd = input("提取码，不设留空：")
+            sharePwd = input("Extraction code (leave empty for none): ")
             fileIdList = fileIdList.strip(',')
             data = {"driveId": 0,
                     "expiration": "2024-02-09T11:42:45+08:00",
@@ -345,11 +400,18 @@ class Pan123:
             print(message)
             ShareKey = shareResJson['data']['ShareKey']
             share_url = 'https://www.123pan.com/s/' + ShareKey
-            print('分享链接：\n' + share_url + "提取码：" + sharePwd)
+            print('Share link:\n' + share_url + " Extraction code: " + sharePwd)
         else:
-            print("退出分享")
+            print("Share cancelled")
 
     def up_load(self, filePath, parentFileId=None, sure=None):
+        """Upload a file to 123Pan Cloud (legacy method)
+        
+        Args:
+            filePath: Path to the file to upload
+            parentFileId: Parent folder ID (None for current directory)
+            sure: Duplicate handling - "1" for keep both, "2" for overwrite
+        """
         if parentFileId is None:
             parentFileId = self.parentFileId
             self.cdById(parentFileId)
@@ -357,12 +419,12 @@ class Pan123:
         filePath = filePath.replace("\"", "")
         filePath = filePath.replace("\\", "/")
         fileName = filePath.split("/")[-1]
-        print("文件名:", fileName)
+        print("File name:", fileName)
         if not os.path.exists(filePath):
-            print("文件不存在，请检查路径是否正确")
+            print("File does not exist, please check the path")
             return
         if os.path.isdir(filePath):
-            print("暂不支持文件夹上传")
+            print("Folder upload not supported in this method")
             return
         fsize = os.path.getsize(filePath)
         with open(filePath, 'rb') as f:
@@ -384,9 +446,9 @@ class Pan123:
         upResJson = upRes.json()
         code = upResJson['code']
         if code == 5060:
-            print("检测到同名文件")
+            print("Duplicate file detected")
             if sure is None:
-                sure = input("检测到1个同名文件,输入1覆盖，2保留两者，0取消：")
+                sure = input("Duplicate file detected. Enter 1 to overwrite, 2 to keep both, 0 to cancel: ")
 
             if sure == '1':
                 listUpRequest["duplicate"] = 1
@@ -394,7 +456,7 @@ class Pan123:
             elif sure == '2':
                 listUpRequest["duplicate"] = 2
             else:
-                print("取消上传")
+                print("Upload cancelled")
                 return
             sign = getSign("/b/api/file/upload_request")
             upRes = requests.post("https://www.123pan.com/b/api/file/upload_request", headers=self.headerLogined,
@@ -404,24 +466,24 @@ class Pan123:
         code = upResJson['code']
         if code == 0:
             # print(upResJson)
-            # print("上传请求成功")
+            # print("Upload request successful")
             Reuse = upResJson['data']['Reuse']
             if Reuse:
-                print("上传成功，文件已MD5复用")
+                print("Upload successful, file MD5 reused")
                 return
         else:
             print(upResJson)
-            print("上传请求失败")
+            print("Upload request failed")
             return
 
         bucket = upResJson['data']['Bucket']
         StorageNode = upResJson['data']['StorageNode']
         uploadKey = upResJson['data']['Key']
         uploadId = upResJson['data']['UploadId']
-        upFileId = upResJson['data']['FileId']  # 上传文件的fileId,完成上传后需要用到
-        print("上传文件的fileId:", upFileId)
+        upFileId = upResJson['data']['FileId']  # FileId for upload completion
+        print("Upload file ID:", upFileId)
 
-        # 获取已将上传的分块
+        # Get already uploaded chunks
         startData = {"bucket": bucket, "key": uploadKey, "uploadId": uploadId, "storageNode": StorageNode}
         startRes = requests.post("https://www.123pan.com/b/api/file/s3_list_upload_parts", headers=self.headerLogined,
                                  data=json.dumps(startData))
@@ -434,10 +496,10 @@ class Pan123:
             print(startData)
             print(startResJson)
 
-            print("获取传输列表失败")
+            print("Failed to get transfer list")
             return
 
-        # 分块，每一块取一次链接，依次上传
+        # Upload in chunks, get link for each chunk
         block_size = 5242880
         with open(filePath, 'rb') as f:
             partNumberStart = 1
@@ -462,10 +524,10 @@ class Pan123:
                 getLinkResJson = getLinkRes.json()
                 code = getLinkResJson['code']
                 if code == 0:
-                    # print("获取链接成功")
+                    # print("Got link successfully")
                     pass
                 else:
-                    print("获取链接失败")
+                    print("Failed to get link")
                     # print(getLinkResJson)
                     return
                 # print(getLinkResJson)
@@ -476,9 +538,9 @@ class Pan123:
 
                 partNumberStart = partNumberStart + 1
 
-        print("\n处理中")
-        # 完成标志
-        # 1.获取已上传的块
+        print("\nProcessing...")
+        # Upload completion flag
+        # 1. Get already uploaded chunks
         uploadedListUrl = "https://www.123pan.com/b/api/file/s3_list_upload_parts"
         uploadedCompData = {"bucket": bucket, "key": uploadKey, "uploadId": uploadId, "storageNode": StorageNode}
         # print(uploadedCompData)
@@ -487,7 +549,7 @@ class Pan123:
         requests.post(compmultipartUpUrl, headers=self.headerLogined,
                       data=json.dumps(uploadedCompData))
 
-        # 3.报告完成上传，关闭upload session
+        # 3. Report upload complete, close upload session
         if fsize > 64 * 1024 * 1024:
             time.sleep(3)
         closeUpSessionUrl = "https://www.123pan.com/b/api/file/upload_complete"
@@ -499,14 +561,19 @@ class Pan123:
         # print(closeResJson)
         code = closeResJson['code']
         if code == 0:
-            print("上传成功")
+            print("Upload successful")
         else:
-            print("上传失败")
+            print("Upload failed")
             print(closeResJson)
             return
 
-    # dirId 就是 fileNumber，从0开始，0为第一个文件，传入时需要减一 ！！！（好像文件夹都排在前面）
+    # dirId is fileNumber, 0-indexed, subtract 1 when passing! (folders seem to be listed first)
     def cd(self, dir_num):
+        """Change current directory
+        
+        Args:
+            dir_num: Directory number (1-indexed), '..' for parent, '/' for root
+        """
         if not dir_num.isdigit():
             if dir_num == "..":
                 if len(self.parentFileList) > 1:
@@ -515,7 +582,7 @@ class Pan123:
                     self.get_dir()
                     self.show()
                 else:
-                    print("已经是根目录")
+                    print("Already at root directory")
                 return
             elif dir_num == "/":
                 self.parentFileId = 0
@@ -524,14 +591,14 @@ class Pan123:
                 self.show()
                 return
             else:
-                print("输入错误")
+                print("Invalid input")
                 return
         dir_num = int(dir_num) - 1
         if dir_num >= (len(self.list) - 1) or dir_num < 0:
-            print("输入错误")
+            print("Invalid input")
             return
         if self.list[dir_num]['Type'] != 1:
-            print("不是文件夹")
+            print("Not a folder")
             return
         self.parentFileId = self.list[dir_num]['FileId']
         self.parentFileList.append(self.parentFileId)
@@ -539,7 +606,11 @@ class Pan123:
         self.show()
 
     def cdById(self, id):
-
+        """Change current directory by folder ID
+        
+        Args:
+            id: Folder ID to navigate to
+        """
         self.parentFileId = id
         self.parentFileList.append(self.parentFileId)
         self.get_dir()
@@ -547,6 +618,14 @@ class Pan123:
         self.show()
 
     def read_ini(self, user_name, pass_word, input_pwd, authorization="", ):
+        """Read credentials from 123pan.txt configuration file
+        
+        Args:
+            user_name: Default username if file read fails
+            pass_word: Default password if file read fails
+            input_pwd: If True, prompt for credentials when file not found
+            authorization: Default authorization token
+        """
         try:
             with open("123pan.txt", "r") as f:
                 text = f.read()
@@ -556,29 +635,39 @@ class Pan123:
             authorization = text['authorization']
 
         except FileNotFoundError or json.decoder.JSONDecodeError:
-            print("read failed")
+            print("Read failed")
 
             if user_name == "" or pass_word == "":
                 if input_pwd:
 
-                    user_name = input("userName:")
-                    pass_word = input("passWord:")
+                    user_name = input("Username:")
+                    pass_word = input("Password:")
                     authorization = ""
                 else:
-                    raise Exception("禁止输入模式下，没有账号或密码")
+                    raise Exception("Input mode disabled, no username or password")
 
         self.userName = user_name
         self.passWord = pass_word
         self.authorization = authorization
 
     def mkdir(self, dirname, parentFileId=None, remake=False):
+        """Create a directory in 123Pan Cloud
+        
+        Args:
+            dirname: Name of the directory to create
+            parentFileId: Parent folder ID (None for current directory)
+            remake: If False, check if folder exists first and return its ID
+            
+        Returns:
+            int: Folder ID if successful, None otherwise
+        """
         if parentFileId:
             if self.parentFileId != parentFileId:
                 self.cdById(parentFileId)
         if not remake:
             for i in self.list:
                 if i['FileName'] == dirname:
-                    print("文件夹已存在")
+                    print("Folder already exists")
                     # print(self.list)
                     # print(i)
                     return i['FileId']
@@ -593,15 +682,15 @@ class Pan123:
         try:
             resJson = resMk.json()
         except json.decoder.JSONDecodeError:
-            print("创建失败")
+            print("Create failed")
             print(resMk.text)
             return
         code = resJson['code']
         if code == 0:
-            print("创建成功")
+            print("Created successfully")
             self.get_dir()
             return resJson["data"]["Info"]["FileId"]
         else:
-            print("创建失败")
+            print("Create failed")
             print(resJson)
             return
