@@ -43,7 +43,7 @@ def setup_readline():
     if hasattr(readline, 'set_completer'):
         readline.set_completer(path_completer)
         # Set completion delimiters
-        readline.set_completer_delims(' \t\n;')
+        readline.set_completer_delims('\t\n;')
         # Enable tab completion
         readline.parse_and_bind('tab: complete')
     

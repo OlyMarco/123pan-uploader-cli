@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import getpass
+from tosasitill_123pan import config
 
 
 def get_token(passport=None, password=None, remember=True):
@@ -20,7 +21,7 @@ def get_token(passport=None, password=None, remember=True):
     Returns:
         Dictionary with credentials and token, or None if login fails
     """
-    url = "https://login.123pan.com/api/user/sign_in"
+    url = config.URL_SIGN_IN
 
     if not passport:
         passport = input("Enter 123pan username/phone: ")
@@ -35,7 +36,7 @@ def get_token(passport=None, password=None, remember=True):
     }
 
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=config.TIMEOUT_SHORT)
         result = response.json()
 
         if result.get("code") == 200:

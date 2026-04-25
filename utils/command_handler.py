@@ -6,6 +6,7 @@ import sys
 import argparse
 import shlex
 from utils.input_handler import normalize_path
+from utils.mget import MGet, _validate_output_path
 
 
 def create_argument_parser():
@@ -29,15 +30,41 @@ def create_argument_parser():
     return parser
 
 
+def _is_flag(token):
+    """Check if token is a flag argument. Returns (is_flag, flag_name)."""
+    if not token.startswith('-'):
+        return False, None
+
+    # Standalone "-" is not a valid flag, treat as path part
+    if token == '-':
+        return False, None
+
+    # Single letter flags: -d, -f, -k (must be ASCII letter)
+    if len(token) == 2 and token[1].isascii() and token[1].isalpha():
+        return True, token
+
+    # Long flags: --dest, --force, --no-skip
+    if token.startswith('--'):
+        return True, token
+
+    # On Windows, paths can contain segments starting with "-" followed by
+    # non-ASCII characters (e.g., "- 副本", "-中文"). Treat these as path parts.
+    # Also treat "-X" where X is non-ASCII/non-letter as path part.
+    if len(token) >= 2 and not (token[1].isascii() and token[1].isalpha()):
+        return False, None
+
+    return True, token
+
+
 def parse_upload_command(user_input, default_sure_option, default_skip_existing):
     """
     Parse user input for upload command and extract parameters.
-    
+
     Args:
         user_input: Raw user input string
         default_sure_option: Default conflict resolution option
         default_skip_existing: Default skip existing files setting
-        
+
     Returns:
         dict: Parsed command with keys:
             - path: Path to upload (str)
@@ -53,67 +80,123 @@ def parse_upload_command(user_input, default_sure_option, default_skip_existing)
         'skip_existing': default_skip_existing,
         'error': None
     }
-    
-    # Check if command has parameters
-    if " -" in user_input:
-        try:
-            parser = create_argument_parser()
-            
-            # On Windows, use posix=False to handle backslashes correctly
-            if sys.platform == "win32":
-                parsed_input = shlex.split(user_input, posix=False)
+
+    user_input = user_input.strip()
+    if not user_input:
+        result['error'] = "Empty input"
+        return result
+
+    try:
+        parts = shlex.split(user_input, posix=False)
+    except ValueError as e:
+        result['error'] = f"Invalid command format: {e}"
+        return result
+
+    if not parts:
+        result['error'] = "Empty input"
+        return result
+
+    # Detect unquoted paths with spaces - shlex splits on them, which breaks
+    # paths like "C:\path\to file". Detect by checking if any non-flag segment
+    # (that doesn't start with quotes) contains spaces.
+    unquoted_path_with_spaces = False
+    for i, part in enumerate(parts):
+        if not part.startswith('-') and ' ' in part and not part.startswith('"') and not part.startswith("'"):
+            unquoted_path_with_spaces = True
+            break
+
+    # Flags that take a value (must be followed by a non-flag argument)
+    flags_with_value = {'-d', '--dest'}
+    # Boolean flags (don't consume additional values)
+    bool_flags = {'-f', '--force', '-k', '--keep', '--no-skip'}
+
+    path_parts = []
+    i = 0
+
+    while i < len(parts):
+        token = parts[i]
+        is_flag, _ = _is_flag(token)
+
+        # Non-flag token: part of the path
+        if not is_flag:
+            path_parts.append(token)
+            i += 1
+            # All subsequent non-flag tokens are also part of the path
+            while i < len(parts):
+                next_token = parts[i]
+                next_is_flag, _ = _is_flag(next_token)
+                if not next_is_flag:
+                    path_parts.append(next_token)
+                    i += 1
+                else:
+                    break
+            continue
+
+        # It's a flag
+        if token in bool_flags:
+            i += 1
+        elif token in flags_with_value:
+            # -d takes a value (next token, unless it's another flag)
+            if i + 1 < len(parts):
+                next_token = parts[i + 1]
+                next_is_flag, _ = _is_flag(next_token)
+                if not next_is_flag:
+                    i += 2  # consume flag + value
+                else:
+                    result['error'] = f"Flag {token} requires a value"
+                    return result
             else:
-                parsed_input = shlex.split(user_input)
-            
-            # Parse arguments, catching SystemExit from argparse
-            try:
-                parsed_args = parser.parse_args(parsed_input)
-            except SystemExit:
-                result['error'] = "Invalid command format. Use: <path> [-d dest] [-f | -k] [--no-skip]"
+                result['error'] = f"Flag {token} requires a value"
                 return result
-            
-            if not parsed_args or not parsed_args.path:
-                result['error'] = "Invalid command format. Path is required."
-                return result
-            
-            # Extract and normalize parameters
-            result['path'] = normalize_path(parsed_args.path)
-            result['dest_name'] = normalize_path(parsed_args.dest) if parsed_args.dest else None
-            
-            # Determine conflict handling option
-            if parsed_args.force:
-                result['sure_option'] = "2"  # Overwrite
-            elif parsed_args.keep:
-                result['sure_option'] = "1"  # Keep both
-            
-            # Skip existing setting
-            result['skip_existing'] = not parsed_args.no_skip
-            
-        except (ValueError, Exception) as e:
-            result['error'] = f"Invalid command format: {str(e)}"
+        else:
+            result['error'] = f"Unknown flag: {token}"
             return result
-    else:
-        # Simple path mode - handle quoted paths properly
-        result['path'] = normalize_path(user_input)
-    
+
+    # Reconstruct path from collected parts
+    raw_path = ' '.join(path_parts).strip().strip('"\'')
+    if not raw_path:
+        result['error'] = "Path is required"
+        return result
+
+    # If path contains spaces but wasn't quoted, suggest quoting
+    if unquoted_path_with_spaces and ' ' in raw_path:
+        result['error'] = (f'Path "{raw_path}" contains spaces. '
+                           'Please quote the path: "{raw_path}"')
+        return result
+
+    # Now parse the actual flags using argparse
+    try:
+        parser = create_argument_parser()
+        parsed_args = parser.parse_args(parts[len(path_parts):])
+    except SystemExit:
+        result['error'] = "Invalid flags. Use: <path> [-d dest] [-f | -k] [--no-skip]"
+        return result
+
+    result['path'] = normalize_path(raw_path)
+    result['dest_name'] = normalize_path(parsed_args.dest) if parsed_args.dest else None
+
+    if parsed_args.force:
+        result['sure_option'] = "2"
+    elif parsed_args.keep:
+        result['sure_option'] = "1"
+
+    result['skip_existing'] = not parsed_args.no_skip
     return result
 
 
 def handle_mget_command(user_input):
     """
     Handle mget (download) command processing.
-    
+
     Args:
         user_input: Raw command input starting with 'mget'
-    
+
     Usage:
         mget <url> [-o output_file] [-t threads] [-s]
     """
     import shlex
     import argparse
-    from utils.mget import MGet
-    
-    # Parse mget command arguments
+
     try:
         # Split command properly
         if sys.platform == "win32":
@@ -151,19 +234,28 @@ def handle_mget_command(user_input):
         output = normalize_path(parsed_args.output)
         threads = parsed_args.threads
         single_thread = parsed_args.single
-        
+
+        # Validate output path before download
+        try:
+            validated_output = _validate_output_path(output)
+        except ValueError as e:
+            print(f"Output path error: {e}")
+            return
+
         print(f"Starting download: {url}")
-        print(f"Saving to: {output}")
+        print(f"Saving to: {validated_output}")
         print(f"Threads: {'1 (single)' if single_thread else threads}")
-        
-        # Start download
+
         downloader = MGet(default_threads=threads)
-        downloader.download(url, output, threads, force_single=single_thread)
+        # Pass validated path directly; MGet.download skips its own validation
+        result = downloader._download_raw(url, validated_output, threads, force_single=single_thread)
         
         # Show completion message
-        if os.path.exists(output):
-            file_size = os.path.getsize(output)
+        if result is not None and os.path.exists(validated_output):
+            file_size = os.path.getsize(validated_output)
             print(f"Download complete! File size: {file_size / 1024 / 1024:.2f} MB")
+        elif result is None:
+            print("Download failed.")
         
     except Exception as e:
         print(f"Download failed: {str(e)}")
@@ -189,7 +281,8 @@ def execute_upload(mpush, path, sure_option, dest_name, skip_existing):
             )
         else:
             mpush.upload_directory_concurrent(path, sure=sure_option, skip_existing=skip_existing)
-        mpush.pan.cd("/")  # Reset to root directory after directory upload
+        mpush.pan.parentFileId = 0
+        mpush.pan.parentFileList = [0]
     elif os.path.isfile(path):
         # Upload single file
         if dest_name:
@@ -197,7 +290,8 @@ def execute_upload(mpush, path, sure_option, dest_name, skip_existing):
             folder_id = mpush.pan.mkdir(dest_name, remake=False)
             if folder_id:
                 mpush.upload_file(path, parent_id=folder_id, sure=sure_option, skip_existing=skip_existing)
-                mpush.pan.cd("/")  # Return to root directory after operation
+                mpush.pan.parentFileId = 0
+                mpush.pan.parentFileList = [0]
             else:
                 print(f"Error: Failed to create directory '{dest_name}'")
         else:

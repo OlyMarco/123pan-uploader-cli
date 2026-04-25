@@ -9,14 +9,15 @@ import requests
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tosasitill_123pan.sign_get import getSign
+from tosasitill_123pan import config
 
 
 def format_size(size_bytes):
     """Convert bytes to human-readable format
-    
+
     Args:
         size_bytes: Size in bytes
-        
+
     Returns:
         str: Human-readable size string (e.g., '1.50 MB')
     """
@@ -32,7 +33,7 @@ def format_size(size_bytes):
 
 class MPush:
     """Upload handler for 123Pan Cloud Storage
-    
+
     This class provides methods to upload files and directories to 123Pan Cloud.
     Features:
     - Single file upload with progress bar
@@ -43,7 +44,7 @@ class MPush:
 
     def __init__(self, pan):
         """Initialize MPush with an authenticated Pan123 instance
-        
+
         Args:
             pan: Authenticated Pan123 instance for API calls
         """
@@ -52,10 +53,10 @@ class MPush:
     @staticmethod
     def compute_file_md5(file_path):
         """Calculate MD5 hash of a file using chunked reading
-        
+
         Args:
             file_path: Path to the file to hash
-            
+
         Returns:
             str: Hexadecimal MD5 hash string
         """
@@ -67,35 +68,30 @@ class MPush:
 
     def check_file_exists_with_md5(self, file_name, local_md5, parent_id=None):
         """Check if a file with same name and MD5 already exists in the target directory
-        
+
         Args:
             file_name: Name of the file to check
             local_md5: MD5 hash of the local file
             parent_id: Parent folder ID to check in (None for current directory)
-            
+
         Returns:
             bool: True if file exists with same MD5, False otherwise
         """
         try:
             if parent_id is not None and self.pan.parentFileId != parent_id:
                 self.pan.cdById(parent_id)
-            
-            # Refresh directory listing
-            self.pan.get_dir()
-            
-            # Safety check for None list
+
             if self.pan.list is None:
                 return False
-            
+
             for file_info in self.pan.list:
                 if file_info["FileName"] == file_name and file_info["Type"] == 0:
-                    # Found file with same name, compare MD5 (Etag is the MD5)
                     remote_md5 = file_info.get("Etag", "").lower()
-                    if remote_md5 == local_md5.lower():
+                    if remote_md5 and remote_md5 == local_md5.lower():
                         return True
             return False
         except Exception as e:
-            tqdm.write(f"Warning: Could not check for existing file: {str(e)}")
+            tqdm.write(f"Warning: Could not check for existing file: {e}")
             return False
 
     def upload_file(self, file_path, parent_id=None, sure=None, skip_existing=True):
@@ -111,7 +107,7 @@ class MPush:
             dict: Upload result with 'success', 'skipped', 'file_name' keys
         """
         result = {'success': False, 'skipped': False, 'file_name': ''}
-        
+
         if not os.path.exists(file_path) or not os.path.isfile(file_path):
             tqdm.write(f"Error: {file_path} is not a valid file")
             return result
@@ -129,7 +125,6 @@ class MPush:
         if parent_id is None:
             parent_id = self.pan.parentFileId
 
-        # Check if file already exists with same MD5 (skip duplicate)
         if skip_existing:
             if self.check_file_exists_with_md5(file_name, md5, parent_id):
                 tqdm.write(f"Skipped (same MD5 exists): {file_name}")
@@ -137,21 +132,15 @@ class MPush:
                 result['skipped'] = True
                 return result
 
-        # First check if file with same name exists and handle accordingly
-        if sure == "2":  # If overwrite is pre-selected
-            # Get current directory files
+        if sure == "2":
             self.pan.get_dir()
-            # Find file with same name and delete it
             for i, file_info in enumerate(self.pan.list):
                 if file_info["FileName"] == file_name and file_info["Type"] == 0:
                     tqdm.write(f"Deleting existing file: {file_name}")
-                    # Use file index to delete (by_num=True)
                     self.pan.delete_file(i, by_num=True, operation=True)
-                    # Refresh directory listing
                     self.pan.get_dir()
                     break
 
-        # Prepare upload request payload
         list_up_request = {
             "driveId": 0,
             "etag": md5,
@@ -162,19 +151,25 @@ class MPush:
             "duplicate": 0,
         }
 
-        # Sign and send upload request
         sign = getSign("/b/api/file/upload_request")
-        up_res = requests.post(
-            "https://www.123pan.com/b/api/file/upload_request",
-            headers=self.pan.headerLogined,
-            params={sign[0]: sign[1]},
-            data=json.dumps(list_up_request),
-        )
+        try:
+            up_res = requests.post(
+                config.URL_UPLOAD_REQUEST,
+                headers=self.pan.headerLogined,
+                params={sign[0]: sign[1]},
+                json=list_up_request,
+                timeout=config.TIMEOUT_MEDIUM
+            )
+            up_res_json = up_res.json()
+        except requests.exceptions.RequestException as e:
+            tqdm.write(f"Upload request failed: {e}")
+            return result
+        except ValueError as e:
+            tqdm.write(f"Upload request parse failed: {e}")
+            return result
 
-        up_res_json = up_res.json()
         code = up_res_json.get("code")
 
-        # Handle duplicate file detection (code 5060)
         if code == 5060:
             tqdm.write("Duplicate file detected")
             if sure not in ["1", "2"]:
@@ -185,33 +180,36 @@ class MPush:
             if sure == "1":
                 list_up_request["duplicate"] = 1
             elif sure == "2":
-                # Delete the existing file and retry
                 self.pan.get_dir()
                 for i, file_info in enumerate(self.pan.list):
                     if file_info["FileName"] == file_name and file_info["Type"] == 0:
                         tqdm.write(f"Deleting existing file: {file_name}")
                         self.pan.delete_file(i, by_num=True, operation=True)
-                        # Refresh directory listing after deletion
                         self.pan.get_dir()
                         break
-
-                # Now overwrite by setting duplicate=2
                 list_up_request["duplicate"] = 2
             else:
                 tqdm.write("Upload cancelled")
                 return result
 
             sign = getSign("/b/api/file/upload_request")
-            up_res = requests.post(
-                "https://www.123pan.com/b/api/file/upload_request",
-                headers=self.pan.headerLogined,
-                params={sign[0]: sign[1]},
-                data=json.dumps(list_up_request),
-            )
-            up_res_json = up_res.json()
+            try:
+                up_res = requests.post(
+                    config.URL_UPLOAD_REQUEST,
+                    headers=self.pan.headerLogined,
+                    params={sign[0]: sign[1]},
+                    json=list_up_request,
+                    timeout=config.TIMEOUT_MEDIUM
+                )
+                up_res_json = up_res.json()
+            except requests.exceptions.RequestException as e:
+                tqdm.write(f"Upload request failed after duplicate handling: {e}")
+                return result
+            except ValueError as e:
+                tqdm.write(f"Upload request parse failed: {e}")
+                return result
             code = up_res_json.get("code")
 
-        # Check upload request response
         if code == 0:
             reuse = up_res_json["data"].get("Reuse")
             if reuse:
@@ -222,14 +220,12 @@ class MPush:
             tqdm.write(f"Upload request failed: {up_res_json}")
             return result
 
-        # Extract upload parameters from response
         bucket = up_res_json["data"]["Bucket"]
         storage_node = up_res_json["data"]["StorageNode"]
         upload_key = up_res_json["data"]["Key"]
         upload_id = up_res_json["data"]["UploadId"]
         up_file_id = up_res_json["data"]["FileId"]
 
-        # Initialize multipart upload session
         start_data = {
             "bucket": bucket,
             "key": upload_key,
@@ -237,19 +233,26 @@ class MPush:
             "storageNode": storage_node,
         }
 
-        start_res = requests.post(
-            "https://www.123pan.com/b/api/file/s3_list_upload_parts",
-            headers=self.pan.headerLogined,
-            data=json.dumps(start_data),
-        )
+        try:
+            start_res = requests.post(
+                config.URL_S3_LIST_PARTS,
+                headers=self.pan.headerLogined,
+                json=start_data,
+                timeout=config.TIMEOUT_MEDIUM
+            )
+            start_res_json = start_res.json()
+        except requests.exceptions.RequestException as e:
+            tqdm.write(f"Failed to get transfer list: {e}")
+            return result
+        except ValueError as e:
+            tqdm.write(f"Failed to parse transfer list response: {e}")
+            return result
 
-        start_res_json = start_res.json()
-        if start_res_json["code"] != 0:
+        if start_res_json.get("code") != 0:
             tqdm.write(f"Failed to get transfer list: {start_res_json}")
             return result
 
-        # Upload file in chunks (5MB per chunk)
-        block_size = 5242880  # 5MB
+        block_size = config.DEFAULT_BLOCK_SIZE
         part_number_start = 1
 
         with open(file_path, "rb") as f, tqdm(
@@ -260,7 +263,6 @@ class MPush:
                 if not data:
                     break
 
-                # Request presigned URL for this chunk
                 get_link_data = {
                     "bucket": bucket,
                     "key": upload_key,
@@ -270,30 +272,40 @@ class MPush:
                     "StorageNode": storage_node,
                 }
 
-                get_link_res = requests.post(
-                    "https://www.123pan.com/b/api/file/s3_repare_upload_parts_batch",
-                    headers=self.pan.headerLogined,
-                    data=json.dumps(get_link_data),
-                )
+                try:
+                    get_link_res = requests.post(
+                        config.URL_S3_PREPARE_PARTS,
+                        headers=self.pan.headerLogined,
+                        json=get_link_data,
+                        timeout=config.TIMEOUT_MEDIUM
+                    )
+                    get_link_res_json = get_link_res.json()
+                except requests.exceptions.RequestException as e:
+                    tqdm.write(f"Failed to get upload link: {e}")
+                    return result
+                except ValueError as e:
+                    tqdm.write(f"Failed to parse upload link response: {e}")
+                    return result
 
-                get_link_res_json = get_link_res.json()
-                if get_link_res_json["code"] != 0:
+                if get_link_res_json.get("code") != 0:
                     tqdm.write(f"Failed to get upload link: {get_link_res_json}")
                     return result
 
-                # Upload chunk to presigned URL
                 upload_url = get_link_res_json["data"]["presignedUrls"][
                     str(part_number_start)
                 ]
-                requests.put(upload_url, data=data)
+                try:
+                    put_res = requests.put(upload_url, data=data, timeout=config.TIMEOUT_UPLOAD_PART)
+                    put_res.raise_for_status()
+                except requests.exceptions.RequestException as e:
+                    tqdm.write(f"Chunk upload failed: {e}")
+                    return result
 
                 pbar.update(len(data))
                 part_number_start += 1
 
         tqdm.write("Chunk upload complete, finalizing...")
 
-        # Finalize multipart upload
-        uploaded_list_url = "https://www.123pan.com/b/api/file/s3_list_upload_parts"
         uploaded_comp_data = {
             "bucket": bucket,
             "key": upload_key,
@@ -301,38 +313,65 @@ class MPush:
             "storageNode": storage_node,
         }
 
-        requests.post(
-            uploaded_list_url,
-            headers=self.pan.headerLogined,
-            data=json.dumps(uploaded_comp_data),
-        )
+        try:
+            list_parts_res = requests.post(
+                config.URL_S3_LIST_PARTS,
+                headers=self.pan.headerLogined,
+                json=uploaded_comp_data,
+                timeout=config.TIMEOUT_MEDIUM
+            )
+            list_parts_json = list_parts_res.json()
+        except requests.exceptions.RequestException as e:
+            tqdm.write(f"Failed to list uploaded parts: {e}")
+            return result
+        except ValueError as e:
+            tqdm.write(f"Failed to parse parts list response: {e}")
+            return result
 
-        # Complete multipart upload
-        comp_multipart_up_url = (
-            "https://www.123pan.com/b/api/file/s3_complete_multipart_upload"
-        )
-        requests.post(
-            comp_multipart_up_url,
-            headers=self.pan.headerLogined,
-            data=json.dumps(uploaded_comp_data),
-        )
+        if list_parts_json.get("code") != 0:
+            tqdm.write(f"s3_list_upload_parts failed: {list_parts_json}")
+            return result
 
-        # Wait for large files to be processed
+        try:
+            comp_res = requests.post(
+                config.URL_S3_COMPLETE_MULTIPART,
+                headers=self.pan.headerLogined,
+                json=uploaded_comp_data,
+                timeout=config.TIMEOUT_LONG
+            )
+            comp_json = comp_res.json()
+        except requests.exceptions.RequestException as e:
+            tqdm.write(f"Failed to complete multipart upload: {e}")
+            return result
+        except ValueError as e:
+            tqdm.write(f"Failed to parse complete response: {e}")
+            return result
+
+        if comp_json.get("code") != 0:
+            tqdm.write(f"s3_complete_multipart_upload failed: {comp_json}")
+            return result
+
         if file_size > 64 * 1024 * 1024:
             time.sleep(3)
 
-        # Close upload session
-        close_up_session_url = "https://www.123pan.com/b/api/file/upload_complete"
         close_up_session_data = {"fileId": up_file_id}
 
-        close_up_session_res = requests.post(
-            close_up_session_url,
-            headers=self.pan.headerLogined,
-            data=json.dumps(close_up_session_data),
-        )
+        try:
+            close_up_session_res = requests.post(
+                config.URL_UPLOAD_COMPLETE,
+                headers=self.pan.headerLogined,
+                json=close_up_session_data,
+                timeout=config.TIMEOUT_MEDIUM
+            )
+            close_res_json = close_up_session_res.json()
+        except requests.exceptions.RequestException as e:
+            tqdm.write(f"Upload complete request failed: {e}")
+            return result
+        except ValueError as e:
+            tqdm.write(f"Upload complete parse failed: {e}")
+            return result
 
-        close_res_json = close_up_session_res.json()
-        if close_res_json["code"] == 0:
+        if close_res_json.get("code") == 0:
             tqdm.write(f"Upload successful: {file_name}")
             result['success'] = True
             return result
@@ -380,7 +419,6 @@ class MPush:
         if parent_id is None:
             parent_id = self.pan.parentFileId
 
-        # Create root directory in 123Pan
         folder_id = self.pan.mkdir(dir_name, parent_id, remake=False)
         if not folder_id:
             print(f"Failed to create directory {dir_name}")
@@ -388,62 +426,51 @@ class MPush:
 
         print(f"Directory created: {dir_name}, ID: {folder_id}")
 
-        # Directory ID mapping (local path -> remote folder ID)
         mkdir_list = {dir_path: folder_id}
-
-        # Directories to skip during traversal
         skip_dirs = ["venv", ".idea", "__pycache__", ".git", "node_modules"]
 
-        # Collect all files to upload for progress tracking
         files_to_upload = []
-        
-        # First pass: create directory structure and collect files
+
         for filepath, dirnames, filenames in os.walk(dir_path):
-            # Skip specific directories
             if any(skip_dir in filepath for skip_dir in skip_dirs):
                 continue
 
-            # Create remote folders for subdirectories
             parent_path = os.path.dirname(filepath)
             if parent_path in mkdir_list and filepath != dir_path:
                 sub_dir_name = os.path.basename(filepath)
                 parent_folder_id = mkdir_list[parent_path]
                 sub_folder_id = self.pan.mkdir(sub_dir_name, parent_folder_id, remake=False)
-                time.sleep(0.2)  # Rate limiting to avoid API throttling
-                mkdir_list[filepath] = sub_folder_id
-                tqdm.write(f"Created directory: {sub_dir_name}, ID: {sub_folder_id}")
+                time.sleep(0.2)
+                if sub_folder_id:
+                    mkdir_list[filepath] = sub_folder_id
+                    tqdm.write(f"Created directory: {sub_dir_name}, ID: {sub_folder_id}")
 
-            # Collect files for upload
             if filepath in mkdir_list:
                 current_folder_id = mkdir_list[filepath]
                 for filename in filenames:
-                    # Filter by file type if specified
                     if file_types:
                         if not any(filename.endswith(ft) for ft in file_types):
                             continue
                     file_path = os.path.join(filepath, filename)
                     files_to_upload.append((file_path, current_folder_id))
 
-        # Statistics tracking
         total_files = len(files_to_upload)
         uploaded_count = 0
         skipped_count = 0
         failed_count = 0
 
-        # Upload files with overall progress bar
         with tqdm(total=total_files, desc="Overall Progress", position=0, unit="file") as overall_pbar:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all upload tasks
-                future_to_file = {
-                    executor.submit(
-                        self.upload_file, file_path, folder_id, sure, skip_existing
-                    ): file_path
-                    for file_path, folder_id in files_to_upload
-                }
-                
-                # Process completed uploads
-                for future in as_completed(future_to_file):
-                    file_path = future_to_file[future]
+                futures = {}
+                for file_path, target_folder_id in files_to_upload:
+                    # Capture target_folder_id at submission time (not late binding)
+                    future = executor.submit(
+                        self.upload_file, file_path, target_folder_id, sure, skip_existing
+                    )
+                    futures[future] = file_path
+
+                for future in as_completed(futures):
+                    file_path = futures[future]
                     try:
                         result = future.result()
                         if result.get('success'):
@@ -454,21 +481,20 @@ class MPush:
                         else:
                             failed_count += 1
                     except Exception as e:
-                        tqdm.write(f"Error uploading {file_path}: {str(e)}")
+                        tqdm.write(f"Error uploading {file_path}: {e}")
                         failed_count += 1
-                    
+
                     overall_pbar.update(1)
                     overall_pbar.set_postfix(
-                        uploaded=uploaded_count, 
-                        skipped=skipped_count, 
+                        uploaded=uploaded_count,
+                        skipped=skipped_count,
                         failed=failed_count
                     )
 
-        # Print summary
         print(f"\nDirectory upload completed")
         print(f"  Total files: {total_files}")
         print(f"  Uploaded: {uploaded_count}")
         print(f"  Skipped (same MD5): {skipped_count}")
         print(f"  Failed: {failed_count}")
-        
+
         return failed_count == 0

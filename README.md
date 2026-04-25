@@ -5,12 +5,16 @@
 ![Python](https://img.shields.io/badge/Python-3.6+-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=for-the-badge)
+![Last Commit](https://img.shields.io/github/last-commit/OlyMarco/123pan-uploader-cli?style=for-the-badge)
+![Issues](https://img.shields.io/github/issues/OlyMarco/123pan-uploader-cli?style=for-the-badge)
 
 **🚀 A high-performance CLI tool for 123Pan Cloud Storage**
 
-[Features](#-features) • [Quick Start](#-quick-start) • [Usage](#-usage-guide)
+[Features](#-features) • [Quick Start](#-quick-start) • [Usage](#-usage-guide) • [Changelog](#-changelog)
 
 </div>
+
+---
 
 ## 📖 Overview
 
@@ -19,6 +23,7 @@ A practical server-side file uploading tool that supports:
 - Multi-threaded downloading for direct links
 - **Bash-style input** with Tab completion and command history
 - **Smart duplicate detection** - skip files with same MD5
+- **Flexible upload modes** - skip, overwrite, or keep both on conflict
 
 一个实用的服务器端文件上传工具，支持123云盘大文件快速上传、多线程下载、Bash风格输入（Tab补全和历史记录）、智能MD5去重。
 
@@ -34,6 +39,7 @@ A practical server-side file uploading tool that supports:
 | ⌨️ **Bash-style Input** | Tab completion, command history, arrow keys | Tab补全、历史记录、方向键 |
 | 📊 **Progress Tracking** | Real-time progress bar with upload statistics | 实时进度条和上传统计 |
 | 🔐 **Auto Authentication** | Token persistence to `123pan.txt` | 自动保存登录凭据 |
+| 🔧 **Flexible Modes** | `-f` overwrite, `-k` keep both, `--no-skip` force upload | 多种冲突处理模式 |
 
 ## 📦 Installation | 安装
 
@@ -86,20 +92,32 @@ First run will prompt for 123Pan credentials (auto-saved to `123pan.txt`).
 | *(默认)* | Skip if same filename **AND** same MD5 exist | 文件名和MD5都相同则跳过 |
 | `--no-skip` | Re-upload all, keep both if name conflicts | 全部重传，同名文件保留两者 |
 | `-f` | Delete existing and re-upload (overwrite) | 删除已存在文件后重新上传（覆盖） |
+| `-k` | Keep both files on conflict (default) | 冲突时保留两者（默认行为） |
+
+### Interactive Mode | 交互模式
 
 ```bash
-# Default: Skip if same name AND MD5
+# Basic upload | 基本上传
 > /path/to/file
 
-# --no-skip: Always upload, keep both on conflict
-> /path/to/file --no-skip
+# Upload with custom directory name | 指定远程目录名
+> /path/to/dir -d "My_Backup"
 
-# -f: Force overwrite existing file
+# Force overwrite | 强制覆盖
 > /path/to/file -f
 
-# Upload to custom directory
-> /path/to/dir -d "My_Backup" -f
+# Keep both on conflict | 冲突时保留两者
+> /path/to/file -k
+
+# Disable MD5 skip, re-upload all | 禁用MD5检查，全部重传
+> /path/to/file --no-skip
+
+# Combine flags (order doesn't matter) | 组合使用（顺序无关）
+> /path/to/file -f -d "Backup" --no-skip
+> /path/to/file -d "Backup" -f
 ```
+
+> 💡 **Tip**: For paths with spaces, use quotes: `"C:\path with spaces\file"`
 
 ### Download Command | 下载命令
 
@@ -140,6 +158,28 @@ Based on [tosasitill/123pan](https://github.com/tosasitill/123pan) - Provides co
 
 基于 [tosasitill/123pan](https://github.com/tosasitill/123pan) - 提供核心认证和API功能。
 
+---
+
+## 📋 Changelog | 更新日志
+
+### [Unreleased] - Latest
+
+#### ✨ New Features | 新功能
+- **Enhanced command parsing** - Improved flag handling for better compatibility with Windows paths containing special characters (e.g., `中文文件夹`)
+- **Flexible flag ordering** - Flags can now be specified in any order: `-f -d dest` and `-d dest -f` both work correctly
+- **Path with spaces support** - Added helpful error message when paths contain spaces, guiding users to use quotes
+
+#### 🐛 Bug Fixes | Bug 修复
+- Fixed incorrect flag parsing when `-f` appeared before `-d`
+- Fixed path recognition for Windows folder names starting with `-` or containing Chinese characters
+- Improved error messages for invalid command formats
+
+#### 📖 Documentation | 文档更新
+- Added Changelog section
+- Enhanced Usage Guide with more examples
+- Added badges for last commit and issues
+
+---
 
 ## ⚠️ Disclaimer | 免责声明
 
