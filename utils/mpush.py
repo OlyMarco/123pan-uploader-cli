@@ -8,7 +8,6 @@ import hashlib
 import requests
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from tosasitill_123pan.sign_get import getSign
 from tosasitill_123pan import config
 
 
@@ -151,12 +150,10 @@ class MPush:
             "duplicate": 0,
         }
 
-        sign = getSign("/b/api/file/upload_request")
         try:
             up_res = requests.post(
                 config.URL_UPLOAD_REQUEST,
                 headers=self.pan.headerLogined,
-                params={sign[0]: sign[1]},
                 json=list_up_request,
                 timeout=config.TIMEOUT_MEDIUM
             )
@@ -192,12 +189,10 @@ class MPush:
                 tqdm.write("Upload cancelled")
                 return result
 
-            sign = getSign("/b/api/file/upload_request")
             try:
                 up_res = requests.post(
                     config.URL_UPLOAD_REQUEST,
                     headers=self.pan.headerLogined,
-                    params={sign[0]: sign[1]},
                     json=list_up_request,
                     timeout=config.TIMEOUT_MEDIUM
                 )

@@ -7,7 +7,6 @@ import os
 import json
 import base64
 import requests
-from .sign_get import getSign
 from . import config
 
 
@@ -26,9 +25,14 @@ class Pan123:
     """
 
     _header_base = {
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36 Edg/109.0.1474.0',
-        "app-version": "2",
-        "platform": "web",
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'zh-CN,zh;q=0.9',
+        'Content-Type': 'application/json',
+        'Origin': 'https://yun.123pan.cn',
+        'Referer': 'https://yun.123pan.cn/',
+        'platform': 'web',
+        'App-Version': '3',
     }
 
     _header_authenticated_template = {
@@ -38,17 +42,12 @@ class Pan123:
         "Authorization": "",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
-        "LoginUuid": "z-uk_yT8HwR4raGX1gqGk",
         "Pragma": "no-cache",
-        "Referer": "https://www.123pan.com/",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0",
+        "Origin": "https://yun.123pan.cn",
+        "Referer": "https://yun.123pan.cn/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
         "platform": "web",
-        "sec-ch-ua": "^\"^Microsoft",
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": "^\"^Windows^^"
+        "Content-Type": "application/json",
     }
 
     def __init__(self, readfile=True, user_name="", pass_word="", authorization="", input_pwd=True):
@@ -93,26 +92,27 @@ class Pan123:
             int: Response code (200 for success, other values for failure)
         """
         data = {"remember": True, "passport": self.userName, "password": self.passWord}
-        sign = getSign('/b/api/user/sign_in')
         try:
             loginRes = requests.post(
-                config.URL_123PAN_SIGN_IN,
+                config.URL_SIGN_IN,
                 headers=self.headerOnlyUsage,
-                data=data,
-                params={sign[0]: sign[1]},
+                json=data,
                 timeout=config.TIMEOUT_SHORT
             )
-            res_sign = loginRes.json()
+            res = loginRes.json()
         except requests.exceptions.RequestException as e:
             print(f"Login request failed: {e}")
             return -1
+        except ValueError as e:
+            print(f"Login response parse failed: {e}")
+            return -1
 
-        code = res_sign['code']
+        code = res.get('code', -1)
         if code != 200:
-            print(f"code = 1 Error: {code}")
-            print(res_sign.get('message', ''))
+            print(f"Login Error: code={code}")
+            print(res.get('message', ''))
             return code
-        token = res_sign['data']['token']
+        token = res['data']['token']
         self.authorization = 'Bearer ' + token
         self._update_auth_header()
         self.save_file()
@@ -154,9 +154,7 @@ class Pan123:
         lenth_now = 0
         total = -1
         while lenth_now < total or total == -1:
-            sign = getSign('/b/api/file/list/new')
             params = {
-                sign[0]: sign[1],
                 "driveId": 0,
                 "limit": 100,
                 "next": 0,
@@ -243,12 +241,10 @@ class Pan123:
                 "fileName": fileDetail['FileName'], "size": fileDetail['Size']
             }
 
-        sign = getSign("/a/api/file/download_info")
         try:
             linkRes = requests.post(
                 down_request_url,
                 headers=self.headerLogined,
-                params={sign[0]: sign[1]},
                 json=down_request_data,
                 timeout=config.TIMEOUT_MEDIUM
             )
@@ -560,13 +556,11 @@ class Pan123:
             "type": 1, "duplicate": 1, "NotReuse": True,
             "event": "newCreateFolder", "operateType": 1
         }
-        sign = getSign("/a/api/file/upload_request")
         try:
             resMk = requests.post(
                 config.URL_UPLOAD_REQUEST,
                 headers=self.headerLogined,
                 json=dataMk,
-                params={sign[0]: sign[1]},
                 timeout=config.TIMEOUT_SHORT
             )
             resJson = resMk.json()

@@ -10,7 +10,7 @@
 
 **🚀 A high-performance CLI tool for 123Pan Cloud Storage**
 
-[Features](#-features) • [Quick Start](#-quick-start) • [Usage](#-usage-guide) • [Changelog](#-changelog)
+[Features](#-features) • [Quick Start](#-quick-start) • [Usage](#-usage-guide) • [Architecture](#-architecture) • [Changelog](#-changelog)
 
 </div>
 
@@ -40,6 +40,7 @@ A practical server-side file uploading tool that supports:
 | 📊 **Progress Tracking** | Real-time progress bar with upload statistics | 实时进度条和上传统计 |
 | 🔐 **Auto Authentication** | Token persistence to `123pan.txt` | 自动保存登录凭据 |
 | 🔧 **Flexible Modes** | `-f` overwrite, `-k` keep both, `--no-skip` force upload | 多种冲突处理模式 |
+| 🧩 **Resumable Uploads** | S3 multipart upload for large files (5MB chunks) | S3分片上传，支持大文件断点续传 |
 
 ## 📦 Installation | 安装
 
@@ -152,6 +153,36 @@ python app.py /path/to/directory --no-skip          # 全部重传
 python app.py /path/to/directory -d "Backup" -f     # 自定义目录 + 覆盖
 ```
 
+## 🏗 Architecture | 项目架构
+
+```
+123pan-uploader-cli/
+├── app.py                          # 主入口 — CLI解析 + 交互模式
+├── tosasitill_123pan/
+│   ├── class123.py                 # API客户端 — 登录/文件列表/上传/下载/分享
+│   └── config.py                   # 配置中心 — API端点URL + 超时/分片参数
+├── utils/
+│   ├── mpush.py                    # 上传引擎 — MD5去重 + S3分片上传 + 并发
+│   ├── mget.py                     # 下载引擎 — 多线程分块下载
+│   ├── command_handler.py          # 命令解析 — 路径/标志分离 + argparse集成
+│   ├── input_handler.py            # 输入处理 — readline配置 + 路径补全
+│   └── get-token.py                # Token工具 — 独立获取并保存登录凭据
+├── requirements.txt
+└── 123pan.txt                      # 凭据文件（自动生成，勿提交）
+```
+
+### API Authentication | API 鉴权流程
+
+```
+用户名/密码 → POST user.123pan.cn/api/user/sign_in (JSON)
+                    ↓
+             返回 Bearer Token
+                    ↓
+      保存至 123pan.txt + 后续请求 Authorization 头
+```
+
+> **Note**: 2026-07-03 起，123云盘已废弃旧的请求签名（`getSign`）机制，所有 API 调用仅需 Bearer Token 鉴权。
+
 ## 🙏 Credits | 致谢
 
 Based on [tosasitill/123pan](https://github.com/tosasitill/123pan) - Provides core authentication and API functionality.
@@ -161,6 +192,38 @@ Based on [tosasitill/123pan](https://github.com/tosasitill/123pan) - Provides co
 ---
 
 ## 📋 Changelog | 更新日志
+
+### [2026-07-03] — API Migration & Login Fix | API 迁移与登录修复
+
+> 123云盘于 6 月 30 日更新了接口和认证体系（[公告](https://yun.123pan.cn/Notice/240156)），旧版本完全无法登录。此版本完整适配了全新的 API 架构。
+
+#### 🔧 Breaking Changes | 重大变更
+- **Login endpoint migrated** — 登录接口从 `www.123pan.com/b/api/user/sign_in` 迁移至 `user.123pan.cn/api/user/sign_in`，旧端点返回 404
+- **Base domain migrated** — 主域名从 `www.123pan.com` 切换至 `www.123pan.cn`，Web 端已统一跳转至 `yun.123pan.cn`
+- **Signature mechanism removed** — 彻底移除 `getSign` 签名机制及 `sign_get.py` 模块，新 API 仅需 Bearer Token 鉴权，不再要求请求签名参数
+- **Login request format** — 登录请求从 `form-data` 改为 `application/json`，与官方 Web 端保持一致
+
+#### 🐛 Bug Fixes | Bug 修复
+- **Fixed login failure** — 修复因 123pan 接口迁移导致的登录 404 问题
+- **Fixed file list retrieval** — 修复 `get_dir()` 因签名参数被拒绝的问题
+- **Fixed upload request** — 修复 `upload_request` / `mkdir` / `download_info` 等接口因携带废弃签名参数导致的调用失败
+- **Fixed token tool** — 更新 `get-token.py` 请求头以匹配新 API 要求
+
+#### ⬆️ Upgrades | 升级适配
+- Updated request headers: `App-Version` → `3`，`Origin`/`Referer` → `yun.123pan.cn`
+- Unified `Content-Type: application/json` for all authenticated API calls
+- Consolidated duplicate `URL_SIGN_IN` / `URL_123PAN_SIGN_IN` into single `URL_SIGN_IN`
+- Improved login error handling with `ValueError` catch for JSON parse failures
+- Deleted `sign_get.py` — dead code, no longer referenced by any module
+
+#### ✅ Verified | 验证通过
+- Login with phone number + password ✅
+- File list / directory navigation ✅
+- Single file upload (MD5 dedup + chunk upload + complete) ✅
+- `app.py <path>` CLI mode ✅
+- `app.py <path> --no-skip` force upload ✅
+
+---
 
 ### [Unreleased] - Latest
 

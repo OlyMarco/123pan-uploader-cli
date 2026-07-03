@@ -2,16 +2,16 @@
 # -*- coding: utf-8 -*-
 
 # Centralized API URL and configuration constants for 123Pan
+# Updated: 2026-07-03 — migrated to new API architecture (user.123pan.cn)
 
 # Base URLs
-BASE_URL = "https://www.123pan.com"
-LOGIN_URL = "https://login.123pan.com"
+BASE_URL = "https://www.123pan.cn"
+LOGIN_URL = "https://user.123pan.cn"
 
-# Auth endpoints
+# Auth endpoint (new: user.123pan.cn, JSON body, no signature required)
 URL_SIGN_IN = f"{LOGIN_URL}/api/user/sign_in"
-URL_123PAN_SIGN_IN = f"{BASE_URL}/b/api/user/sign_in"
 
-# File operation endpoints
+# File operation endpoints (Bearer Token auth, no signature required)
 URL_FILE_LIST = f"{BASE_URL}/b/api/file/list/new"
 URL_UPLOAD_REQUEST = f"{BASE_URL}/b/api/file/upload_request"
 URL_S3_PREPARE_PARTS = f"{BASE_URL}/b/api/file/s3_repare_upload_parts_batch"
