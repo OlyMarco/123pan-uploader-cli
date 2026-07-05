@@ -10,16 +10,16 @@ from tosasitill_123pan import config
 
 
 def get_token(passport=None, password=None, remember=True):
-    """
-    Get login token for 123pan cloud service
+    """Get login token for 123pan cloud service via account/password.
 
     Args:
-        passport: Username/phone number
-        password: Login password
-        remember: Whether to remember login state
+        passport: Username/phone number (prompted if None)
+        password: Login password (prompted if None)
+        remember: Whether to remember login state (default: True)
 
     Returns:
-        Dictionary with credentials and token, or None if login fails
+        dict with credentials and token if successful, None otherwise.
+        Dict keys: userName, passWord, authorization (Bearer token)
     """
     url = config.URL_SIGN_IN
 

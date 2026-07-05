@@ -8,6 +8,7 @@ import json
 import base64
 import requests
 from . import config
+from utils.logger import log_runtime, log_error
 
 
 class Pan123:
@@ -16,12 +17,26 @@ class Pan123:
     This class provides methods to interact with 123Pan Cloud Storage service.
     Features include login, file listing, upload, download, and directory management.
 
+    Login flow:
+        1. If 123pan.txt exists, load saved token and verify via get_dir()
+        2. If token is invalid (get_dir fails):
+           a. If userName/passWord are saved → re-login with password (try once)
+           b. If no credentials (QR login) → raise exception, program exits
+        3. If 123pan.txt doesn't exist:
+           a. use_qrcode=True → QR code login
+           b. Otherwise → prompt for account/password
+
     Args:
         readfile: If True, read credentials from 123pan.txt file (default: True)
         user_name: Username for login (used if readfile=False)
         pass_word: Password for login (used if readfile=False)
         authorization: Bearer token for authentication (optional)
         input_pwd: If True, prompt for credentials when not available (default: True)
+        use_qrcode: If True, use QR code login instead of password login (default: False)
+
+    Raises:
+        Exception: If login fails and no recovery path is available (token invalid,
+                   no saved credentials for re-login, or QR login failure)
     """
 
     _header_base = {
@@ -50,11 +65,46 @@ class Pan123:
         "Content-Type": "application/json",
     }
 
-    def __init__(self, readfile=True, user_name="", pass_word="", authorization="", input_pwd=True):
+    def __init__(self, readfile=True, user_name="", pass_word="", authorization="", input_pwd=True, use_qrcode=False):
+        """Initialize Pan123 client with login and token verification.
+
+        The initialization flow handles three scenarios:
+        1. QR code login (use_qrcode=True): performs QR login, no credentials needed
+        2. Read from file (readfile=True): loads saved token, verifies it,
+           and attempts password re-login if token is invalid and credentials exist
+        3. Manual credentials (readfile=False): uses provided or prompted credentials
+
+        If login fails and cannot recover, an Exception is raised causing the
+        program to exit with an error message.
+
+        Args:
+            readfile: If True, read credentials from 123pan.txt (default: True)
+            user_name: Username for login (used if readfile=False)
+            pass_word: Password for login (used if readfile=False)
+            authorization: Bearer token for authentication (optional)
+            input_pwd: If True, prompt for credentials when not available (default: True)
+            use_qrcode: If True, use QR code login (default: False)
+
+        Raises:
+            Exception: If token is invalid and no password credentials are available
+                       for re-login, or if QR/password login fails
+        """
         self.RecycleList = None
         self.list = None
-        if readfile:
+        self.userName = ""
+        self.passWord = ""
+        self.authorization = ""
+        self._is_qr_login = False  # Track whether current session is QR-based
+
+        if use_qrcode:
+            # QR code login flow: no username/password needed
+            self._is_qr_login = True
+            self.login_qrcode()
+        elif readfile:
             self.read_ini(user_name, pass_word, input_pwd, authorization)
+            # Track if this is a QR-only login (no password saved)
+            if not self.userName and not self.passWord and self.authorization:
+                self._is_qr_login = True
         else:
             if user_name == "" or pass_word == "":
                 print("Read disabled, username or password is empty")
@@ -71,10 +121,41 @@ class Pan123:
         self.headerLogined = self._build_auth_header()
         self.parentFileId = 0
         self.parentFileList = [0]
+
+        # Verify token by calling get_dir()
         code = self.get_dir()
         if code != 0:
-            self.login()
-            self.get_dir()
+            # Token is invalid or expired
+            log_error(f"Token verification failed (get_dir code={code}), attempting recovery...")
+
+            if self._is_qr_login:
+                # QR login: no password saved, cannot auto-recover
+                msg = ("Token is invalid or expired. This session used QR code login "
+                       "(no saved password). Please re-run with --qr to scan a new QR code.")
+                log_error(msg)
+                raise Exception(msg)
+            elif self.userName and self.passWord:
+                # Password credentials available: attempt re-login (try once)
+                log_runtime("Token invalid, attempting password re-login...")
+                print("Token expired, re-login with saved credentials...")
+                login_code = self.login()
+                if login_code != 200:
+                    msg = f"Password re-login failed (code={login_code}). Program will exit."
+                    log_error(msg)
+                    raise Exception(msg)
+                log_runtime("Password re-login successful.")
+                # Retry get_dir after re-login
+                code = self.get_dir()
+                if code != 0:
+                    msg = f"get_dir still failed after re-login (code={code}). Program will exit."
+                    log_error(msg)
+                    raise Exception(msg)
+            else:
+                # No credentials at all
+                msg = ("Token is invalid and no login credentials are available. "
+                       "Please re-run with --qr or provide account/password.")
+                log_error(msg)
+                raise Exception(msg)
 
     def _build_auth_header(self):
         header = self._header_authenticated_template.copy()
@@ -85,12 +166,51 @@ class Pan123:
         self.authorization = getattr(self, 'authorization', '')
         self.headerLogined = self._build_auth_header()
 
+    def login_qrcode(self):
+        """Authenticate with 123Pan Cloud using QR code scan
+
+        This method uses the WeChat/123Pan app QR code login flow.
+        No username or password is required - the user scans a QR code
+        with their WeChat or 123Pan app to authenticate.
+
+        The QR code data is saved to qrcode.txt with a timestamp.
+        The method polls for scan status and automatically obtains the token.
+
+        Returns:
+            bool: True if login successful
+
+        Raises:
+            Exception: If QR code login fails (timeout, expired, network error)
+        """
+        from utils.qr_login import qr_login
+
+        log_runtime("Starting QR code login...")
+        result = qr_login()
+        if not result['success']:
+            msg = f"QR code login failed: {result.get('error', 'Unknown error')}"
+            log_error(msg)
+            raise Exception(msg)
+
+        token = result['token']
+        self.authorization = 'Bearer ' + token
+        self.userName = ""
+        self.passWord = ""
+        self._is_qr_login = True
+        self._update_auth_header()
+        self.save_file()
+        log_runtime("QR code login successful.")
+        return True
+
     def login(self):
         """Authenticate with 123Pan Cloud and obtain bearer token
+
+        Uses the saved userName and passWord to authenticate via
+        POST /api/user/sign_in with JSON body.
 
         Returns:
             int: Response code (200 for success, other values for failure)
         """
+        log_runtime(f"Password login attempt for user: {self.userName}")
         data = {"remember": True, "passport": self.userName, "password": self.passWord}
         try:
             loginRes = requests.post(
@@ -101,25 +221,30 @@ class Pan123:
             )
             res = loginRes.json()
         except requests.exceptions.RequestException as e:
-            print(f"Login request failed: {e}")
+            log_error(f"Login request failed: {e}")
             return -1
         except ValueError as e:
-            print(f"Login response parse failed: {e}")
+            log_error(f"Login response parse failed: {e}")
             return -1
 
         code = res.get('code', -1)
         if code != 200:
-            print(f"Login Error: code={code}")
-            print(res.get('message', ''))
+            log_error(f"Login failed: code={code}, message={res.get('message', '')}")
             return code
         token = res['data']['token']
         self.authorization = 'Bearer ' + token
+        self._is_qr_login = False  # Password login, can auto-recover
         self._update_auth_header()
         self.save_file()
+        log_runtime("Password login successful.")
         return code
 
     def save_file(self):
-        """Save credentials and authorization token to 123pan.txt file"""
+        """Save credentials and authorization token to 123pan.txt file.
+
+        For QR code login, userName and passWord are empty strings.
+        For password login, all three fields are saved.
+        """
         try:
             with open(config.CREDENTIALS_FILE, "w") as f:
                 saveList = {
@@ -128,9 +253,9 @@ class Pan123:
                     "authorization": self.authorization,
                 }
                 f.write(json.dumps(saveList))
-            print("Saved!")
+            log_runtime(f"Credentials saved to {config.CREDENTIALS_FILE}")
         except OSError as e:
-            print(f"Failed to save credentials: {e}")
+            log_error(f"Failed to save credentials: {e}")
 
     def get_dir(self, _recursion_depth=0):
         """Fetch file list from current directory

@@ -7,11 +7,19 @@ import argparse
 import shlex
 from utils.input_handler import normalize_path
 from utils.mget import MGet, _validate_output_path
+from utils.logger import log_command, log_runtime, log_error
 
 
 def create_argument_parser():
-    """
-    Create and configure the argument parser for upload commands.
+    """Create and configure the argument parser for upload commands.
+    
+    Supported arguments:
+        path:           Path to file or directory to upload (optional)
+        -d, --dest:     Destination directory name
+        -f, --force:    Force overwrite existing files
+        -k, --keep:     Keep both files on conflict
+        --no-skip:      Disable MD5 duplicate check
+        --qr, --qrcode: Force QR code login (scan with WeChat)
     
     Returns:
         argparse.ArgumentParser: Configured parser for upload commands
@@ -26,6 +34,7 @@ def create_argument_parser():
     parser.add_argument("-f", "--force", action="store_true", help="Overwrite existing files (delete and re-upload)")
     parser.add_argument("-k", "--keep", action="store_true", help="Keep both files on conflict")
     parser.add_argument("--no-skip", action="store_true", help="Don't skip existing files with same MD5")
+    parser.add_argument("--qr", "--qrcode", dest="qrcode", action="store_true", help="Force QR code login (scan with WeChat or 123Pan app)")
     
     return parser
 
@@ -108,7 +117,7 @@ def parse_upload_command(user_input, default_sure_option, default_skip_existing)
     # Flags that take a value (must be followed by a non-flag argument)
     flags_with_value = {'-d', '--dest'}
     # Boolean flags (don't consume additional values)
-    bool_flags = {'-f', '--force', '-k', '--keep', '--no-skip'}
+    bool_flags = {'-f', '--force', '-k', '--keep', '--no-skip', '--qr', '--qrcode'}
 
     path_parts = []
     i = 0
@@ -185,8 +194,10 @@ def parse_upload_command(user_input, default_sure_option, default_skip_existing)
 
 
 def handle_mget_command(user_input):
-    """
-    Handle mget (download) command processing.
+    """Handle mget (download) command processing.
+
+    Parses the mget command, validates arguments, and executes the download.
+    Logs the command to the command log and runtime log.
 
     Args:
         user_input: Raw command input starting with 'mget'
@@ -262,16 +273,19 @@ def handle_mget_command(user_input):
 
 
 def execute_upload(mpush, path, sure_option, dest_name, skip_existing):
-    """
-    Execute the upload operation for a file or directory.
+    """Execute the upload operation for a file or directory.
+    
+    Logs the upload start and completion to the runtime log.
     
     Args:
         mpush: MPush instance for uploading
         path: Path to file or directory to upload
-        sure_option: Conflict resolution option ("1" or "2")
+        sure_option: Conflict resolution option ("1" for keep both, "2" for overwrite)
         dest_name: Destination name (None to keep original)
         skip_existing: Whether to skip files with matching MD5
     """
+    log_runtime(f"Upload started: path='{path}', mode={sure_option}, dest='{dest_name}', skip={skip_existing}")
+    
     if os.path.isdir(path):
         # Upload directory
         print(f"Preparing to upload directory: {os.path.basename(path)}")

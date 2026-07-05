@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import os
+
 # Centralized API URL and configuration constants for 123Pan
 # Updated: 2026-07-03 — migrated to new API architecture (user.123pan.cn)
 
@@ -10,6 +12,23 @@ LOGIN_URL = "https://user.123pan.cn"
 
 # Auth endpoint (new: user.123pan.cn, JSON body, no signature required)
 URL_SIGN_IN = f"{LOGIN_URL}/api/user/sign_in"
+
+# QR code login endpoints
+URL_QR_CODE_GENERATE = f"{LOGIN_URL}/api/user/qr-code/generate"
+URL_QR_CODE_WX = f"{LOGIN_URL}/api/user/qr-code/wx_code"
+URL_QR_CODE_RESULT = f"{LOGIN_URL}/api/user/qr-code/result"
+URL_TOKEN_VERIFY = f"{LOGIN_URL}/api/user/token/verify"
+
+# QR code login page URL (for visiting to get cookies)
+LOGIN_PAGE_URL = f"{LOGIN_URL}/centerlogin?redirect_url=https%3A%2F%2Fyun.123pan.cn&source_page=website"
+
+# QR code login file
+QRCODE_FILE = "qrcode.txt"
+
+# QR code polling interval (seconds)
+QRCODE_POLL_INTERVAL = 2
+# QR code timeout (seconds, default 120s)
+QRCODE_TIMEOUT = 120
 
 # File operation endpoints (Bearer Token auth, no signature required)
 URL_FILE_LIST = f"{BASE_URL}/b/api/file/list/new"
@@ -32,6 +51,12 @@ TIMEOUT_UPLOAD_PART = 30 # Each upload chunk to presigned URL
 # Config file
 CREDENTIALS_FILE = "123pan.txt"
 HISTORY_FILE = "~/.123pan_history"
+
+# Log directories (three log types: commands, runtime, errors)
+LOG_DIR = "logs"
+LOG_DIR_COMMANDS = os.path.join(LOG_DIR, "commands")
+LOG_DIR_RUNTIME = os.path.join(LOG_DIR, "runtime")
+LOG_DIR_ERRORS = os.path.join(LOG_DIR, "errors")
 
 # Upload defaults
 DEFAULT_BLOCK_SIZE = 5 * 1024 * 1024  # 5MB chunks
